@@ -1,0 +1,13 @@
+{
+  "method_id": "msdp",
+  "block_size": 8,
+  "pattern_count": 8,
+  "normalized_margin": 0.015,
+  "determinant_floor": 0.25,
+  "mean_penalty": 2.0,
+  "seed": 2026,
+  "pattern_selector": "message_independent_unconstrained_minimax_over_both_signs",
+  "embedding": "exact_continuous_box_constrained_quadratic_projection_then_integer_rounding_and_margin_repair",
+  "decoding": "sign_of_normalized_spatial_determinant",
+  "key": "seed_and_bitpacked_host_dependent_message_independent_pattern_map"
+}
