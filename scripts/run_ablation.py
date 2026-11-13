@@ -8,7 +8,7 @@ from dataclasses import replace
 from qr64_certified.msdp import MSDPConfig
 from qr64_certified.common.io import load_host_rgb,load_watermark_binary
 from qr64_certified.research import (add_common_args,hosts,watermarks,parse_seeds,
-                                     measure_trial,write_result_bundle)
+                                     measure_trial,write_result_bundle,TrialJournal,protocol_hash)
 
 VARIANTS={
  'full':{},
@@ -31,19 +31,30 @@ def main():
     if any(v not in VARIANTS for v in names):p.error(f'Valid variants: {list(VARIANTS)}')
     base=MSDPConfig(normalized_margin=a.normalized_margin,determinant_floor=a.determinant_floor,
                     mean_penalty=a.mean_penalty,pattern_count=a.pattern_count)
-    rows=[]
-    for h in hosts(a.hosts):
+    cfgs={name:replace(base,**VARIANTS[name]) for name in names}
+    seed_values=parse_seeds(a.seeds)
+    file_hosts=hosts(a.hosts);file_wms=watermarks(a.watermarks)
+    spec={'experiment':'ablation','hosts':[h.stem for h in file_hosts],
+          'watermarks':[w.stem for w in file_wms],'seeds':seed_values,
+          'suite':a.suite,'protocol_hash':protocol_hash(a.suite),'configs':{k:v.__dict__ for k,v in cfgs.items()},
+          'attacked_quality':not a.skip_attacked_quality}
+    journal=TrialJournal(a.output,spec=spec)
+    for h in file_hosts:
         host=load_host_rgb(h)
-        for w in watermarks(a.watermarks):
+        for w in file_wms:
             wm=load_watermark_binary(w)
-            for seed in parse_seeds(a.seeds):
+            for seed in seed_values:
                 for name in names:
-                    config=replace(base,**VARIANTS[name])
-                    print(f'{name} {h.stem} {w.stem} seed={seed}',flush=True)
-                    rows+=measure_trial(host,wm,config=config,seed=seed,suite=a.suite,label=name,
-                                        host_id=h.stem,watermark_id=w.stem,fail_fast=a.fail_fast)
-                    write_result_bundle(rows,a.output,spec={'variants':names,'suite':a.suite,
-                                                               'config':base.__dict__})
-    if a.fail_fast and any(r['status']!='ok' for r in rows):raise SystemExit(1)
+                    trial_id=f'{name}|{h.stem}|{w.stem}|{seed}'
+                    if journal.has(trial_id):
+                        print('Resuming: skip', trial_id,flush=True)
+                        continue
+                    print(trial_id,flush=True)
+                    trial=measure_trial(host,wm,config=cfgs[name],seed=seed,suite=a.suite,label=name,
+                                        host_id=h.stem,watermark_id=w.stem,fail_fast=a.fail_fast,
+                                        attacked_quality=not a.skip_attacked_quality)
+                    journal.append(trial_id,trial)
+    write_result_bundle(journal.data,a.output,spec=spec)
+    if a.fail_fast and any(r['status']!='ok' for r in journal.data):raise SystemExit(1)
 
 if __name__=='__main__': main()

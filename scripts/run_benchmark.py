@@ -2,9 +2,9 @@
 """Run MSDP and/or the 16 preserved literature baselines on identical inputs.
 
 Usage (from repository root):
-  python scripts/run_benchmark.py --methods msdp --hosts Girl --suite sanity
-  python scripts/run_benchmark.py --methods msdp,primary_blind --hosts Girl --suite common20
-  python scripts/run_benchmark.py --methods msdp,all_baselines --hosts all --suite publication
+  python scripts/run_benchmark.py --methods msdp --hosts Girl --suite basic20x3
+  python scripts/run_benchmark.py --methods msdp,primary_blind --hosts Girl --suite basic20x3
+  python scripts/run_benchmark.py --methods msdp,all_baselines --hosts all --suite basic20x3
 
 Every method is compared on the same host, watermark and attacks; published
 native/adapted fidelity and blindness distinctions are recorded, not erased.
@@ -36,7 +36,7 @@ from qr64_certified.common.metrics import psnr, ssim, watermark_metrics
 from qr64_certified.msdp import (
     MSDPConfig, embed_msdp, extract_msdp, key_to_jsonable,
 )
-from qr64_certified.research import protocol_hash
+from qr64_certified.research import protocol_hash, TrialJournal
 
 
 def _json_safe(obj: Any) -> Any:
@@ -248,7 +248,7 @@ def main() -> None:
     parser.add_argument('--methods', default='msdp', help='msdp, primary_blind, all_baselines, or comma-separated IDs')
     parser.add_argument('--hosts', default='Girl', help='host name(s), without .bmp, or all')
     parser.add_argument('--watermarks', default='wm', help='watermark name(s), without .png, or all')
-    parser.add_argument('--suite', default='sanity', choices=('clean', *list_attack_suites()))
+    parser.add_argument('--suite', default='basic20x3', choices=('clean', *list_attack_suites()))
     parser.add_argument('--seed', type=int, default=2026)
     parser.add_argument('--normalized-margin', type=float, default=0.015)
     parser.add_argument('--determinant-floor', type=float, default=0.25)
@@ -276,20 +276,31 @@ def main() -> None:
     baseline_parameters = json.loads((ROOT / 'configs' / 'baseline_parameters.json').read_text(encoding='utf-8'))
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, Any]] = []
+    spec={'experiment':'benchmark','methods':methods,'hosts':[h.stem for h in hosts],
+          'watermarks':[m.stem for m in marks],'seed':args.seed,'suite':args.suite,
+          'protocol_hash':protocol_hash(args.suite),
+          'msdp_params':{k:getattr(args,k) for k in ('normalized_margin','determinant_floor',
+                          'mean_penalty','pattern_count','pattern_selector','disable_integer_repair')},
+          'baseline_parameters':baseline_parameters}
+    journal=TrialJournal(out,spec=spec)
     for method in methods:
         for host in hosts:
             for mark in marks:
+                trial_id=f'{method}|{host.stem}|{mark.stem}|{args.seed}'
+                if journal.has(trial_id):
+                    print('Resuming: skip',trial_id,flush=True)
+                    continue
                 print(f'Running {method} | host={host.stem} | watermark={mark.stem} | suite={args.suite}', flush=True)
                 trial = evaluate_one(method, host, mark, attacks, args, baseline_parameters)
-                rows.extend(trial)
+                journal.append(trial_id,trial)
                 clean = next((r for r in trial if r['attack_id']=='none__clean'), None)
-                if clean:
+                if clean and clean.get('status')=='ok':
                     print(f"  clean PSNR={clean['clean_psnr_db']:.2f} dB  "
                           f"NC={clean['clean_nc']:.4f}  BER={clean['clean_ber']:.4f}", flush=True)
                 else:
                     print('  ERROR',trial[0].get('error'),flush=True)
-                _write_csv(rows, out / 'per_attack.csv')
+    rows=journal.data
+    _write_csv(rows, out / 'per_attack.csv')
     summarized: list[dict[str, Any]] = []
     for method in methods:
         group = [row for row in rows if row.get('method_id')==method]

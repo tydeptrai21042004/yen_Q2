@@ -220,6 +220,26 @@ def crop_resize(image: Array, keep: float = 0.9, seed: int | None = None, random
     return np.asarray(crop.resize((w, h), Image.Resampling.BICUBIC), dtype=np.uint8)
 
 
+def crop_zero_fill(image: Array, keep: float = 0.90, value: int = 0, **kwargs) -> Array:
+    """Keep the centered keep-by-keep rectangle; zero-fill the original canvas.
+
+    ``keep`` is a linear side-length ratio, not an area fraction. Unlike
+    ``crop_resize``, this operation does not magnify the retained pixels.
+    """
+    img = _u8(image)
+    h, w = img.shape[:2]
+    keep = float(keep)
+    if not (0.0 < keep <= 1.0):
+        raise ValueError("keep must be in (0,1]")
+    ch = max(1, min(h, round(h * keep)))
+    cw = max(1, min(w, round(w * keep)))
+    y0 = (h - ch) // 2
+    x0 = (w - cw) // 2
+    out = np.full_like(img, int(np.clip(value, 0, 255)))
+    out[y0:y0+ch, x0:x0+cw] = img[y0:y0+ch, x0:x0+cw]
+    return out
+
+
 def occlusion(image: Array, block: int = 64, seed: int = 123, value: int = 0, num_blocks: int = 1, **kwargs) -> Array:
     rng = np.random.default_rng(int(seed))
     out = _u8(image).copy()
@@ -781,6 +801,7 @@ _ATTACK_FUNCS: dict[str, Callable[..., Array]] = {
     "translation": translate,
     "resize": resize_attack,
     "crop_resize": crop_resize,
+    "crop_zero_fill": crop_zero_fill,
     "occlusion": occlusion,
     "occlusion_fraction": occlusion_fraction,
     "gamma": gamma_correction,

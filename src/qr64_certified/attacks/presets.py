@@ -182,6 +182,53 @@ COMMON_20 = (
     _a("common20_hist_equalization", "hist_equalization", {}, "photometric", "moderate"),
 )
 
+# Paper protocol: exactly the 20 attack types x 3 levels from Table 1.
+# Only attacked entries belong here; all runners add one separate clean row.
+# Gaussian variance is defined on [0,1]; crop keep is the centered linear
+# dimension retained on a same-sized zero-filled canvas.
+_BASIC_20X3_TYPES = (
+    ("jpeg", "jpeg", "compression", "quality", (90, 70, 50)),
+    ("jpeg2000", "jpeg2000", "compression", "quality_layer", (3.0, 7.0, 10.0)),
+    ("bit_depth", "bit_depth", "compression", "bits", (7, 6, 5)),
+    ("color_quantization", "color_quantization", "compression", "colors", (128, 64, 32)),
+    ("gaussian_noise", "gaussian_noise_var", "noise", "variance", (0.001, 0.003, 0.005)),
+    ("salt_pepper", "salt_pepper", "noise", "amount", (0.001, 0.005, 0.01)),
+    ("speckle", "speckle_noise", "noise", "variance", (0.001, 0.005, 0.01)),
+    ("poisson", "poisson_noise", "noise", "peak", (255.0, 128.0, 64.0)),
+    ("median", "median_filter", "filtering", "size", (3, 5, 7)),
+    ("average", "average_filter", "filtering", "size", (3, 5, 7)),
+    ("gaussian_blur", "gaussian_blur", "filtering", "radius", (0.5, 1.0, 1.5)),
+    ("sharpen", "sharpen", "filtering", "factor", (1.25, 1.5, 2.0)),
+    ("direct_rotation", "rotation", "geometric", "degrees", (5.0, 10.0, 15.0)),
+    ("resize", "resize", "geometric", "factor", (0.9, 0.75, 0.5)),
+    ("crop_zero_fill", "crop_zero_fill", "geometric", "keep", (0.95, 0.90, 0.80)),
+    ("translation", "translation", "geometric", "shift", (2, 4, 8)),
+    ("brightness", "brightness", "photometric", "factor", (0.95, 0.90, 0.80)),
+    ("contrast", "contrast", "photometric", "factor", (0.95, 0.90, 0.80)),
+    ("gamma", "gamma", "photometric", "gamma", (1.05, 1.20, 1.50)),
+    ("saturation", "saturation", "photometric", "factor", (0.80, 0.50, 0.20)),
+)
+
+
+def _make_basic_20x3() -> tuple[AttackConfig, ...]:
+    levels = ("mild", "moderate", "strong")
+    result = []
+    for name, group, category, parameter, values in _BASIC_20X3_TYPES:
+        for severity, value in zip(levels, values):
+            params = ({"shift_x": value, "shift_y": value} if parameter == "shift"
+                      else {parameter: value})
+            if category == "noise":
+                params["seed"] = 123
+            if group == "crop_zero_fill":
+                params["value"] = 0
+            result.append(_a(f"basic20x3_{name}_{severity}", group, params,
+                             category, severity))
+    assert len(result) == 60 and len({a.attack_id for a in result}) == 60
+    return tuple(result)
+
+
+BASIC_20X3 = _make_basic_20x3()
+
 COMMON_20_GROUPS = {
     "compression_quantization": tuple(a for a in COMMON_20 if a.category == "compression"),
     "noise": tuple(a for a in COMMON_20 if a.category == "noise"),
@@ -336,6 +383,7 @@ ATTACK_SUITES = {
     "combined": COMBINED,
     "common": COMMON,
     "common20": COMMON_20,
+    "basic20x3": BASIC_20X3,
     "stress": STRESS,
     "real_world": REAL_WORLD,
     "deformation": DEFORMATION,
@@ -364,6 +412,6 @@ def stress_attacks() -> list[AttackConfig]:
     return list(LEGACY_STRESS)
 
 __all__ = [
-    "ATTACK_SUITES", "COMMON_20", "COMMON_20_GROUPS", "get_attack_suite", "list_attack_suites",
+    "ATTACK_SUITES", "COMMON_20", "COMMON_20_GROUPS", "BASIC_20X3", "get_attack_suite", "list_attack_suites",
     "moderate_attacks", "stress_attacks",
 ]

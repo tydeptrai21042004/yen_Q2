@@ -34,7 +34,7 @@ def main():
     p.add_argument('--test-hosts',default='pepper')
     p.add_argument('--watermarks',default='wm')
     p.add_argument('--margins',default='.005,.01,.015,.02,.03,.05')
-    p.add_argument('--suite',default='common20')
+    p.add_argument('--suite',default='basic20x3')
     p.add_argument('--seed',type=int,default=2026)
     p.add_argument('--psnr-tolerance',type=float,default=1.5)
     p.add_argument('--output',required=True)
@@ -98,7 +98,7 @@ def main():
                             trials.append({**base,'attack_id':attack.attack_id,'status':'error','error':repr(ex)})
                 except Exception as ex:
                     trials.append({'method':method,'host':h.stem,'attack_id':'embedding','status':'error','error':repr(ex)})
-                csv_write(trials,out/'test_comparison.csv')
+    csv_write(trials,out/'test_comparison.csv')
     if not manifest['matched_within_tolerance']:
         print('WARNING: unmatched PSNR on calibration hosts; see calibration.json',flush=True)
     if any(r.get('status')=='error' for r in trials):print('WARNING: failed trials; see CSV',flush=True)

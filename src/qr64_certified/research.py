@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import time
 from dataclasses import asdict
@@ -88,7 +89,8 @@ def get_attacks(suite: str):
 
 def measure_trial(host: np.ndarray, wm: np.ndarray, *, config: MSDPConfig,
                   seed: int, suite: str='sanity', label: str='full',
-                  host_id: str='', watermark_id: str='', fail_fast: bool=False) -> list[dict]:
+                  host_id: str='', watermark_id: str='', fail_fast: bool=False,
+                  attacked_quality: bool=True) -> list[dict]:
     base={'variant':label,'host_id':host_id,'watermark_id':watermark_id,'seed':seed,
           'normalized_margin':config.normalized_margin,'determinant_floor':config.determinant_floor,
           'mean_penalty':config.mean_penalty,'pattern_count':config.pattern_count,
@@ -129,12 +131,14 @@ def measure_trial(host: np.ndarray, wm: np.ndarray, *, config: MSDPConfig,
             got=extract_msdp(attacked,key)
             extract_s=time.perf_counter()-start
             sc=watermark_metrics(wm,got)
-            rows.append({**common,'attack_id':attack.attack_id,'attack_group':attack.group,
+            row={**common,'attack_id':attack.attack_id,'attack_group':attack.group,
                          'attack_category':attack.category,'severity':attack.severity,
                          'attacked_nc':sc['nc'],'attacked_ber':sc['ber'],
-                         'attacked_psnr_db':psnr(host,attacked),
-                         'attacked_ssim':ssim(host,attacked),
-                         'attack_seconds':attack_s,'extract_seconds':extract_s})
+                         'attack_seconds':attack_s,'extract_seconds':extract_s}
+            if attacked_quality:
+                row['attacked_psnr_db']=psnr(host,attacked)
+                row['attacked_ssim']=ssim(host,attacked)
+            rows.append(row)
         except Exception as ex:
             rows.append({**common,'status':'error','attack_id':attack.attack_id,
                          'attack_group':attack.group,'attack_category':attack.category,
@@ -178,7 +182,62 @@ def write_result_bundle(rows: list[dict], out: str | Path, *, keys=('variant',),
     return summary
 
 
-def add_common_args(parser, *, default_suite='sanity'):
+class TrialJournal:
+    """Resumable, append-only complete-trial journal.
+
+    A JSONL record is committed only after all attacks in a trial finish. The
+    run fingerprint prevents accidental resumption with incompatible options.
+    Partial final lines (e.g., interrupted notebook) are discarded on resume.
+    """
+    def __init__(self, output: str | Path, *, spec: dict, resume: bool = True):
+        self.out = Path(output)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.path = self.out / 'trials.jsonl'
+        self.meta = self.out / 'trial_journal_protocol.json'
+        self.spec = safe(spec)
+        self.keys: set[str] = set()
+        self.data: list[dict] = []
+        if self.meta.exists():
+            previous = json.loads(self.meta.read_text(encoding='utf-8'))
+            if previous != self.spec:
+                raise ValueError(f'Existing journal protocol differs: {self.meta}; use new --output')
+            if not resume:
+                raise FileExistsError(f'Existing journal at {self.path}, use new --output')
+        elif self.path.exists():
+            raise ValueError(f'Journal exists without protocol: {self.path}')
+        else:
+            json_write(self.spec, self.meta)
+        if self.path.exists():
+            with self.path.open('rb+') as fh:
+                contents = fh.read()
+                end = contents.rfind(b'\n')
+                if len(contents) and end + 1 != len(contents):
+                    fh.seek(end + 1)
+                    fh.truncate()
+                for line in contents[:end+1].splitlines():
+                    record = json.loads(line)
+                    key = record['trial_id']
+                    if key in self.keys:
+                        raise ValueError(f'Duplicate journal trial ID: {key}')
+                    self.keys.add(key)
+                    self.data.extend(record['rows'])
+
+    def has(self, trial_id: str) -> bool:
+        return trial_id in self.keys
+
+    def append(self, trial_id: str, rows: list[dict]) -> None:
+        if trial_id in self.keys:
+            raise ValueError(f'Trial already saved: {trial_id}')
+        record = {'trial_id': trial_id, 'rows': safe(rows)}
+        with self.path.open('a', encoding='utf-8') as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, separators=(',',':')) + '\n')
+            fh.flush()
+            os.fsync(fh.fileno())
+        self.keys.add(trial_id)
+        self.data.extend(rows)
+
+
+def add_common_args(parser, *, default_suite='basic20x3'):
     parser.add_argument('--hosts',default='Girl')
     parser.add_argument('--watermarks',default='wm')
     parser.add_argument('--suite',default=default_suite,
@@ -186,6 +245,8 @@ def add_common_args(parser, *, default_suite='sanity'):
     parser.add_argument('--seeds',default='2026',help='Comma-separated integer seeds')
     parser.add_argument('--output',required=True)
     parser.add_argument('--fail-fast',action='store_true')
+    parser.add_argument('--skip-attacked-quality', action='store_true',
+                        help='Skip attacked PSNR/SSIM (retain clean PSNR/SSIM and attacked NC/BER)')
     return parser
 
 

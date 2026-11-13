@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'src'))
 from qr64_certified.msdp import MSDPConfig
 from qr64_certified.common.io import load_host_rgb,load_watermark_binary
 from qr64_certified.research import (add_common_args,hosts,watermarks,parse_seeds,
-                                     measure_trial,write_result_bundle,csv_write)
+                                     measure_trial,write_result_bundle,csv_write,TrialJournal,protocol_hash)
 
 def floats(x):return [float(t) for t in x.split(',')]
 def ints(x):return [int(t) for t in x.split(',')]
@@ -43,18 +43,27 @@ def main():
     p.add_argument('--max-configs',type=int,default=150)
     a=p.parse_args(); candidates=configs(a)
     pairs=[(h,w) for h in hosts(a.hosts) for w in watermarks(a.watermarks)]
-    rows=[]
+    seed_values=parse_seeds(a.seeds)
+    spec={'experiment':'parameter_sweep','mode':a.mode,'suite':a.suite,
+          'protocol_hash':protocol_hash(a.suite),'pairs':[(h.stem,w.stem) for h,w in pairs],
+          'seeds':seed_values,'attacked_quality':not a.skip_attacked_quality,
+          'configs':{f'config_{j:03d}':c.__dict__ for j,c in enumerate(candidates)}}
+    journal=TrialJournal(a.output,spec=spec)
     for idx,cfg in enumerate(candidates):
         name=f'config_{idx:03d}'
         print(name,cfg,flush=True)
         for h,w in pairs:
-            host=load_host_rgb(h);wm=load_watermark_binary(w)
-            for seed in parse_seeds(a.seeds):
-                rows+=measure_trial(host,wm,config=cfg,seed=seed,suite=a.suite,label=name,
-                      host_id=h.stem,watermark_id=w.stem,fail_fast=a.fail_fast)
-        write_result_bundle(rows,a.output,spec={'mode':a.mode,'suite':a.suite,
-                    'configs':{f'config_{j:03d}':c.__dict__ for j,c in enumerate(candidates)}})
-    summary=write_result_bundle(rows,a.output)
+            for seed in seed_values:
+                trial_id=f'{name}|{h.stem}|{w.stem}|{seed}'
+                if journal.has(trial_id):
+                    print('Resuming: skip', trial_id, flush=True)
+                    continue
+                host=load_host_rgb(h);wm=load_watermark_binary(w)
+                trial=measure_trial(host,wm,config=cfg,seed=seed,suite=a.suite,label=name,
+                      host_id=h.stem,watermark_id=w.stem,fail_fast=a.fail_fast,
+                      attacked_quality=not a.skip_attacked_quality)
+                journal.append(trial_id,trial)
+    summary=write_result_bundle(journal.data,a.output,spec=spec)
     # Descriptive Pareto frontier only: clean PSNR and attacked NC maximize.
     available=[r for r in summary if r['failed_rows']==0 and
                r['mean_clean_psnr_db'] is not None and r['mean_attack_nc'] is not None]

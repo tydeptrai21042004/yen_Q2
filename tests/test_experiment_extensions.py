@@ -49,3 +49,73 @@ def test_incomplete_reporting_and_protocol(synthetic):
 
 def test_config_validation():
     with pytest.raises(ValueError):MSDPConfig(pattern_selector='bad').validate()
+
+
+def test_basic20x3_exact_61_protocol(synthetic):
+    from collections import Counter
+    from qr64_certified.research import measure_trial
+    attacks = get_attack_suite('basic20x3')
+    assert len(attacks) == 60
+    assert len({attack.attack_id for attack in attacks}) == 60
+    assert Counter(a.category for a in attacks) == {
+        'compression': 12, 'noise': 12, 'filtering': 12,
+        'geometric': 12, 'photometric': 12,
+    }
+    assert Counter(a.severity for a in attacks) == {'mild': 20, 'moderate': 20, 'strong': 20}
+    assert all(a.group != 'none' for a in attacks)
+    expected = {
+        'jpeg': ('quality', (90, 70, 50)),
+        'jpeg2000': ('quality_layer', (3.0, 7.0, 10.0)),
+        'bit_depth': ('bits', (7, 6, 5)),
+        'color_quantization': ('colors', (128, 64, 32)),
+        'gaussian_noise': ('variance', (.001, .003, .005)),
+        'salt_pepper': ('amount', (.001, .005, .01)),
+        'speckle': ('variance', (.001, .005, .01)),
+        'poisson': ('peak', (255, 128, 64)),
+        'median': ('size', (3, 5, 7)),
+        'average': ('size', (3, 5, 7)),
+        'gaussian_blur': ('radius', (.5, 1., 1.5)),
+        'sharpen': ('factor', (1.25, 1.5, 2.)),
+        'direct_rotation': ('degrees', (5., 10., 15.)),
+        'resize': ('factor', (.9, .75, .5)),
+        'crop_zero_fill': ('keep', (.95, .9, .8)),
+        'brightness': ('factor', (.95, .9, .8)),
+        'contrast': ('factor', (.95, .9, .8)),
+        'gamma': ('gamma', (1.05, 1.2, 1.5)),
+        'saturation': ('factor', (.8, .5, .2)),
+    }
+    for name, (field, vals) in expected.items():
+        assert tuple(next(x for x in attacks if x.attack_id == f'basic20x3_{name}_{level}').params[field]
+                     for level in ('mild', 'moderate', 'strong')) == vals
+    for level, shift in zip(('mild','moderate','strong'), (2, 4, 8)):
+        item=next(x for x in attacks if x.attack_id==f'basic20x3_translation_{level}')
+        assert item.params['shift_x'] == item.params['shift_y'] == shift
+    host, wm = synthetic
+    rows = measure_trial(host, wm, config=MSDPConfig(), seed=2026,
+                         suite='basic20x3', attacked_quality=False)
+    assert len(rows) == 61
+    assert sum(r['attack_id'] == 'none__clean' for r in rows) == 1
+    assert sum(r['status'] == 'error' for r in rows) == 0
+    assert all('attacked_ssim' not in r for r in rows)
+    assert 'clean_ssim' in rows[0]
+
+
+def test_crop_zero_fill_keeps_pixels_not_resize():
+    img=np.full((40,60,3),128,dtype=np.uint8)
+    attack=next(x for x in get_attack_suite('basic20x3') if x.attack_id=='basic20x3_crop_zero_fill_moderate')
+    out=apply_attack(img,attack)
+    assert out.shape==img.shape
+    assert np.array_equal(out[2:38,3:57],img[2:38,3:57])
+    assert np.all(out[0,:,:]==0) and np.all(out[:,-1,:]==0)
+
+
+def test_trial_journal_resume_and_protocol_guard(tmp_path):
+    from qr64_certified.research import TrialJournal
+    spec={'suite':'basic20x3','seed':2026}
+    j=TrialJournal(tmp_path,spec=spec)
+    j.append('trial-A',[{'attack_id':'none__clean','status':'ok'}])
+    k=TrialJournal(tmp_path,spec=spec)
+    assert k.has('trial-A')
+    assert len(k.data)==1
+    with pytest.raises(ValueError):
+        TrialJournal(tmp_path,spec={'suite':'common20','seed':2026})

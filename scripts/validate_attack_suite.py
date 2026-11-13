@@ -11,7 +11,7 @@ from qr64_certified.research import csv_write,json_write,protocol_hash
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--suites',default='common20',help='Comma-separated suite names or all')
+    p.add_argument('--suites',default='basic20x3',help='Comma-separated suite names or all')
     p.add_argument('--probe',action='store_true',help='Actually execute each attack twice on fixed image')
     p.add_argument('--fail-on-error',action='store_true')
     p.add_argument('--output',required=True)
