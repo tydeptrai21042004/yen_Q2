@@ -6,7 +6,7 @@ Legacy IDs remain accepted as aliases, but are never emitted in new reports.
 """
 
 from .registry import (
-    ALL_BASELINE_IDS,
+    ALL_BASELINE_IDS, CONTROL_BASELINE_IDS, RELATED_ADDITIONAL_BASELINE_IDS,
     PRIMARY_BLIND_BASELINE_IDS,
     SPECS,
     embed_baseline,
@@ -19,7 +19,8 @@ from .types import BaselineSpec, IntegratedBaselineKey
 from .evaluation import evaluate_baseline_attacks
 
 __all__ = [
-    "ALL_BASELINE_IDS", "PRIMARY_BLIND_BASELINE_IDS", "SPECS",
+    "ALL_BASELINE_IDS", "CONTROL_BASELINE_IDS", "RELATED_ADDITIONAL_BASELINE_IDS",
+    "PRIMARY_BLIND_BASELINE_IDS", "SPECS",
     "BaselineSpec", "IntegratedBaselineKey", "normalize_baseline_id",
     "get_baseline_spec", "list_baselines", "embed_baseline", "extract_baseline",
     "evaluate_baseline_attacks",

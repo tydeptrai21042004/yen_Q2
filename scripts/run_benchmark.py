@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run MSDP and/or the 16 preserved literature baselines on identical inputs.
+"""Run MSDP and/or the 16 paper-linked registered baselines on identical inputs.
 
 Usage (from repository root):
   python scripts/run_benchmark.py --methods msdp --hosts Girl --suite basic20x3
@@ -28,7 +28,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import numpy as np
 from qr64_certified.attacks import apply_attack, get_attack_suite, list_attack_suites
 from qr64_certified.baselines import (
-    ALL_BASELINE_IDS, PRIMARY_BLIND_BASELINE_IDS, embed_baseline,
+    ALL_BASELINE_IDS, RELATED_ADDITIONAL_BASELINE_IDS,
+    PRIMARY_BLIND_BASELINE_IDS, embed_baseline,
     extract_baseline, get_baseline_spec, list_baselines,
 )
 from qr64_certified.common.io import load_host_rgb, load_watermark_binary, save_image
@@ -59,6 +60,10 @@ def _resolve_methods(arg: str) -> list[str]:
         value = value.strip()
         if value == 'all_baselines':
             result.extend(ALL_BASELINE_IDS)
+        elif value == 'related_additions':
+            result.extend(RELATED_ADDITIONAL_BASELINE_IDS)
+        elif value == 'controlled':
+            raise ValueError('Synthetic control baselines were removed. Use related_additions for published-paper methods.')
         elif value == 'primary_blind':
             result.extend(PRIMARY_BLIND_BASELINE_IDS)
         elif value == 'msdp':
@@ -66,7 +71,7 @@ def _resolve_methods(arg: str) -> list[str]:
         elif value in ALL_BASELINE_IDS:
             result.append(value)
         else:
-            raise ValueError(f"Unknown method selection {value!r}; use msdp, all_baselines, primary_blind or full baseline ID")
+            raise ValueError(f"Unknown method selection {value!r}; use msdp, all_baselines, primary_blind, related_additions, or full baseline ID")
     return list(dict.fromkeys(result))
 
 
@@ -157,6 +162,7 @@ def evaluate_one(method_id: str, host_path: Path, watermark_path: Path,
                   'clean_bit_accuracy': clean['bit_accuracy'],
                   'embed_seconds': embed_time, 'clean_extract_seconds': extract_time,
                   'pattern_map_bytes': meta.get('pattern_map_bytes'),
+                  'embedding_step': meta.get('embedding_step'),
                   'minimum_attained_normalized_residual': meta.get('minimum_attained_normalized_residual'),
                   'minimum_attained_signed_determinant': meta.get('minimum_attained_signed_determinant'),
                   'active_box_projection_blocks': meta.get('active_box_projection_blocks'),
@@ -212,15 +218,17 @@ def evaluate_one(method_id: str, host_path: Path, watermark_path: Path,
                 attacked, key, original_host=host if basis['requires_original_host'] else None)
             extract_time = time.perf_counter() - t3
             met = watermark_metrics(watermark, output)
-            rows.append({**common, 'attack_id':attack.attack_id,
+            attack_row = {**common, 'attack_id':attack.attack_id,
                          'attack_group':attack.group,'attack_category':attack.category,
                          'attack_severity':attack.severity,
                          'attack_params':json.dumps(attack.params,sort_keys=True), 'status':'ok',
                          'attack_seconds':attack_time, 'extract_seconds':extract_time,
                          'attacked_nc':met['nc'], 'attacked_ber':met['ber'],
-                         'attacked_bit_accuracy':met['bit_accuracy'],
-                         'attacked_psnr_db':psnr(host, attacked),
-                         'attacked_ssim':ssim(host, attacked)})
+                         'attacked_bit_accuracy':met['bit_accuracy']}
+            if not args.skip_attacked_quality:
+                attack_row['attacked_psnr_db'] = psnr(host, attacked)
+                attack_row['attacked_ssim'] = ssim(host, attacked)
+            rows.append(attack_row)
         except Exception as exc:
             rows.append({**common, 'attack_id':attack.attack_id,
                          'attack_group':attack.group,'attack_category':attack.category,
@@ -245,7 +253,8 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('--methods', default='msdp', help='msdp, primary_blind, all_baselines, or comma-separated IDs')
+    parser.add_argument('--methods', default='msdp',
+                        help='msdp, primary_blind, all_baselines, related_additions, or published method IDs')
     parser.add_argument('--hosts', default='Girl', help='host name(s), without .bmp, or all')
     parser.add_argument('--watermarks', default='wm', help='watermark name(s), without .png, or all')
     parser.add_argument('--suite', default='basic20x3', choices=('clean', *list_attack_suites()))
@@ -260,6 +269,8 @@ def main() -> None:
                         help='Controlled ablation; minimax preserves original MSDP')
     parser.add_argument('--disable-integer-repair',action='store_true',
                         help='Diagnostic ablation; does not guarantee integer margin')
+    parser.add_argument('--skip-attacked-quality',action='store_true',
+                        help='Skip expensive attacked PSNR/SSIM only; always keep clean quality and attacked NC/BER')
     parser.add_argument('--strict',action='store_true',help='Exit nonzero after saving if any experiment fails')
     parser.add_argument('--fail-fast', action='store_true')
     parser.add_argument('--list-baselines', action='store_true')
@@ -279,6 +290,7 @@ def main() -> None:
     spec={'experiment':'benchmark','methods':methods,'hosts':[h.stem for h in hosts],
           'watermarks':[m.stem for m in marks],'seed':args.seed,'suite':args.suite,
           'protocol_hash':protocol_hash(args.suite),
+          'skip_attacked_quality':args.skip_attacked_quality,
           'msdp_params':{k:getattr(args,k) for k in ('normalized_margin','determinant_floor',
                           'mean_penalty','pattern_count','pattern_selector','disable_integer_repair')},
           'baseline_parameters':baseline_parameters}
@@ -313,6 +325,8 @@ def main() -> None:
             'clean_trials':len(clean), 'attacked_trials':len(attacked),
             'mean_clean_psnr_db':float(np.mean([r['clean_psnr_db'] for r in clean])) if clean else None,
             'mean_clean_nc':float(np.mean([r['clean_nc'] for r in clean])) if clean else None,
+            'mean_clean_ber':float(np.mean([r['clean_ber'] for r in clean])) if clean else None,
+            'mean_clean_ssim':float(np.mean([r['clean_ssim'] for r in clean])) if clean else None,
             'mean_attacked_nc':float(np.mean([r['attacked_nc'] for r in attacked])) if attacked else None,
             'mean_attacked_ber':float(np.mean([r['attacked_ber'] for r in attacked])) if attacked else None,
         })

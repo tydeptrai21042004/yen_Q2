@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-seed MSDP experiment orchestrator using the exact 60+clean protocol.
 
-Default ``one_seed`` profile uses disjoint validation/test hosts and five
-primary blind baselines. It never runs separate adversarial image attacks.
+Default ``one_seed`` profile uses disjoint validation/test hosts, five primary blind literature baselines and three additional
+peer-reviewed-paper-derived implementations (one key-assisted blind, two semi-blind). It never runs separate adversarial image attacks.
 All robustness experiments use the same fixed 60 attacks + 1 clean case.
 """
 from __future__ import annotations
@@ -28,8 +28,10 @@ def main():
                    help='Stop before session timeout; unfinished trials remain resumable')
     p.add_argument('--no-result-zip',action='store_true',help='Disable atomic ZIP export after execution')
     p.add_argument('--all-baselines','--include-baselines',dest='all_baselines',action='store_true',
-                   help='All 16 literature baselines instead of five primary blind baselines; slow')
+                   help='All 16 paper-linked methods instead of the five primary blind methods; includes large adaptations and non-blind methods')
     p.add_argument('--skip-theory-solver',action='store_true')
+    p.add_argument('--skip-related-baselines',action='store_true',
+                   help='Keep legacy paper comparison only; also disables the expanded paired statistics')
     p.add_argument('--strict-trials',action='store_true')
     a=p.parse_args()
     root=Path(__file__).resolve().parents[1]
@@ -92,9 +94,15 @@ def main():
          'bernoulli,checkerboard,stripes,constant_zero,constant_one,logo',
          '--probabilities','.5' if quick else '.1,.25,.5,.75,.9',
          '--suite',protocol,'--skip-attacked-quality')
+    task('paper_baseline_audit','audit_paper_baselines.py')
     task('primary_baselines','run_benchmark.py','--methods',
          'msdp,all_baselines' if a.all_baselines else 'msdp,primary_blind',
          '--hosts',test_hosts,'--watermarks',test_wm,'--seed',seed,'--suite',protocol)
+    if not a.skip_related_baselines and not a.all_baselines:
+        task('related_baselines','run_benchmark.py','--methods',
+             'related_additions',
+             '--hosts',test_hosts,'--watermarks',test_wm,'--seed',seed,
+             '--suite',protocol,'--strict','--skip-attacked-quality')
     task('matched_comparison','run_matched_comparison.py',
          '--calibration-hosts','Girl','--test-hosts',
          'airplane' if not full else 'athens',
@@ -107,12 +115,25 @@ def main():
          *([] if a.skip_theory_solver else ['--independent-solver']))
     task('numerical_stress','run_numerical_stress.py','--image-size','64' if quick else '128',
          '--margins','.015' if quick else '.005,.015,.03','--seed',seed)
+    if not a.skip_related_baselines and not quick:
+        paired_inputs = [str(out/'primary_baselines'/'per_attack.csv')]
+        if not a.all_baselines:
+            paired_inputs.append(str(out/'related_baselines'/'per_attack.csv'))
+        task('paired_statistics','analyze_paired_statistics.py',
+             '--inputs',*paired_inputs,
+             '--reference','msdp','--bootstrap','10000','--seed','451')
+    if not quick:
+        task('ablation_statistics','analyze_paired_statistics.py',
+             '--inputs',str(out/'ablation'/'per_attack.csv'),
+             '--method-column','variant','--reference','full',
+             '--bootstrap','10000','--seed','451')
     # The adversarial attack runner is intentionally NOT part of this protocol.
 
     run_spec={'profile':a.profile,'seed':a.seed,'suite':protocol,'conditions_per_trial':61,
               'tuning_hosts':tuning_hosts,'test_hosts':test_hosts,
               'tuning_watermarks':tuning_wm,'test_watermarks':test_wm,
-              'all_baselines':a.all_baselines,'skip_theory_solver':a.skip_theory_solver,
+              'all_baselines':a.all_baselines,'skip_related_baselines':a.skip_related_baselines,
+              'skip_theory_solver':a.skip_theory_solver,
               'tasks':{name:cmd for name,cmd in tasks}}
     spec_path=out/'run_protocol.json'
     if spec_path.exists():

@@ -112,7 +112,17 @@ for canonical_id, spec in SPECS.items():
     for alias in spec.aliases:
         ALIASES[str(alias).lower()] = canonical_id
 
+# All registered methods derive from cited peer-reviewed papers. Methods with
+# substantial algorithm adaptations remain tagged and are NOT in the default
+# additional-comparison group.
 ALL_BASELINE_IDS = tuple(SPECS)
+CONTROL_BASELINE_IDS: tuple[str, ...] = ()  # Compatibility; no synthetic baselines registered.
+RELATED_ADDITIONAL_BASELINE_IDS = (
+    'dwt_qr_fa_guo2017_keyassisted',
+    'dct_ca_qim_mao2024_semiblind',
+    'dwt_wht_svd_kumar2024_semiblind',
+)
+
 PRIMARY_BLIND_BASELINE_IDS = tuple(
     method_id for method_id, spec in SPECS.items() if spec.primary_blind_eligible
 )
@@ -240,7 +250,8 @@ def extract_baseline(
 
 
 __all__ = [
-    "SPECS", "ALIASES", "ALL_BASELINE_IDS", "PRIMARY_BLIND_BASELINE_IDS",
+    "SPECS", "ALIASES", "ALL_BASELINE_IDS", "CONTROL_BASELINE_IDS",
+    "RELATED_ADDITIONAL_BASELINE_IDS", "PRIMARY_BLIND_BASELINE_IDS",
     "normalize_baseline_id", "get_baseline_spec", "list_baselines",
     "embed_baseline", "extract_baseline",
 ]
